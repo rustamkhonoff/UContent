@@ -1,11 +1,14 @@
 using System;
 using System.Threading;
+using UContent.Diagnostics;
 
 namespace UContent
 {
     public sealed class ContentHandle<T> : IDisposable
     {
         private readonly T m_value;
+        private readonly int m_debugId;
+
         private Action m_release;
 
         public object Key { get; }
@@ -27,6 +30,7 @@ namespace UContent
             Key = key;
             m_value = value;
             m_release = release ?? throw new ArgumentNullException(nameof(release));
+            m_debugId = ContentDiagnostics.Register(ContentDebugType.Handle, key, typeof(T).Name);
         }
 
         public bool TryGetValue(out T value)
@@ -43,7 +47,13 @@ namespace UContent
 
         public void Dispose()
         {
-            Interlocked.Exchange(ref m_release, null)?.Invoke();
+            Action release = Interlocked.Exchange(ref m_release, null);
+
+            if (release == null)
+                return;
+
+            release();
+            ContentDiagnostics.Release(m_debugId);
         }
     }
 }

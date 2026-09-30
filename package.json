@@ -1,6 +1,6 @@
 {
   "name": "com.rustamkhonoff.ucontent",
-  "version": "1.1.0",
+  "version": "0.0.2",
   "displayName": "UContent",
   "description": "Content management service",
   "unity": "2021.3",

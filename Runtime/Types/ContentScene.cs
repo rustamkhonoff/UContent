@@ -1,12 +1,14 @@
 using System;
 using Cysharp.Threading.Tasks;
-using UnityEngine.ResourceManagement.ResourceProviders;
+using UContent.Diagnostics;
 using UnityEngine.SceneManagement;
 
 namespace UContent
 {
     public sealed class ContentScene
     {
+        private readonly int m_debugId;
+
         private Func<UniTask> m_unload;
 
         public object Key { get; }
@@ -18,6 +20,7 @@ namespace UContent
             Key = key;
             Scene = scene;
             m_unload = unload ?? throw new ArgumentNullException(nameof(unload));
+            m_debugId = ContentDiagnostics.Register(ContentDebugType.Scene, key, scene.name);
         }
 
         public async UniTask UnloadAsync()
@@ -32,6 +35,7 @@ namespace UContent
             try
             {
                 await unload();
+                ContentDiagnostics.Release(m_debugId);
             }
             catch
             {

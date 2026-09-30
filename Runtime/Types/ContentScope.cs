@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using UContent.Diagnostics;
 using UnityEngine;
 
 namespace UContent
@@ -9,18 +10,20 @@ namespace UContent
     public sealed class ContentScope : IDisposable
     {
         private readonly IContentService m_content;
-        private readonly List<IDisposable> m_contentHandles = new();
+        private readonly List<IDisposable> m_handles = new();
+        private readonly int m_debugId;
 
         private bool m_disposed;
 
         public string Name { get; }
-        public int Count => m_contentHandles.Count;
+        public int Count => m_handles.Count;
         public bool IsDisposed => m_disposed;
 
         internal ContentScope(IContentService content, string name)
         {
             m_content = content;
             Name = string.IsNullOrEmpty(name) ? "ContentScope" : name;
+            m_debugId = ContentDiagnostics.Register(ContentDebugType.Scope, null, Name);
         }
 
         public async UniTask<T> LoadAsync<T>(object key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
@@ -43,11 +46,21 @@ namespace UContent
             return handle.Value;
         }
 
+        public async UniTask<IReadOnlyList<T>> LoadAllAsync<T>(IEnumerable<object> keys, ContentMergeMode mergeMode = ContentMergeMode.Union, CancellationToken cancellationToken = default) where T : UnityEngine.Object
+        {
+            ThrowIfDisposed();
+
+            var handle = await m_content.LoadAllAsync<T>(keys, mergeMode, cancellationToken);
+            Register(handle);
+
+            return handle.Value;
+        }
+
         public async UniTask<GameObject> InstantiateAsync(object key, Transform parent = null, bool instantiateInWorldSpace = false, CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
 
-            var instance = await m_content.InstantiateAsync(key, parent, instantiateInWorldSpace, cancellationToken);
+            ContentInstance instance = await m_content.InstantiateAsync(key, parent, instantiateInWorldSpace, cancellationToken);
             Register(instance);
 
             return instance.Instance;
@@ -57,7 +70,7 @@ namespace UContent
         {
             ThrowIfDisposed();
 
-            var instance = await m_content.InstantiateAsync(key, position, rotation, parent, cancellationToken);
+            ContentInstance instance = await m_content.InstantiateAsync(key, position, rotation, parent, cancellationToken);
             Register(instance);
 
             return instance.Instance;
@@ -65,11 +78,11 @@ namespace UContent
 
         public void Clear()
         {
-            for (var i = m_contentHandles.Count - 1; i >= 0; i--)
+            for (int i = m_handles.Count - 1; i >= 0; i--)
             {
                 try
                 {
-                    m_contentHandles[i].Dispose();
+                    m_handles[i].Dispose();
                 }
                 catch (Exception exception)
                 {
@@ -77,7 +90,7 @@ namespace UContent
                 }
             }
 
-            m_contentHandles.Clear();
+            m_handles.Clear();
         }
 
         public void Dispose()
@@ -86,18 +99,20 @@ namespace UContent
                 return;
 
             m_disposed = true;
+
             Clear();
+            ContentDiagnostics.Release(m_debugId);
         }
 
-        private void Register(IDisposable content)
+        private void Register(IDisposable handle)
         {
             if (m_disposed)
             {
-                content.Dispose();
+                handle.Dispose();
                 throw new ObjectDisposedException(Name);
             }
 
-            m_contentHandles.Add(content);
+            m_handles.Add(handle);
         }
 
         private void ThrowIfDisposed()

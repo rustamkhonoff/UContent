@@ -1,0 +1,18 @@
+{
+    "name": "UContent.Editor",
+    "rootNamespace": "UContent.Editor",
+    "references": [
+        "GUID:a673231e7a7ef4f67a38860470ed04e0"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
