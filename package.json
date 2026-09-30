@@ -1,0 +1,15 @@
+{
+  "name": "com.rustamkhonoff.ucontent",
+  "version": "1.1.0",
+  "displayName": "UContent",
+  "description": "Content management service",
+  "unity": "2021.3",
+  "unityRelease": "21f1",
+  "author": {
+    "name": "rustamkhonoff",
+    "email": "rustamkhonoff@gmail.com"
+  },
+  "dependencies": {
+    "com.cysharp.unitask": "2.5.0"
+  }
+}
