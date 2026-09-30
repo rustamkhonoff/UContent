@@ -1,85 +1,106 @@
 using System;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
-using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace UContent.Internal
 {
     internal sealed class SharedDownloadOperation
     {
-        private readonly object m_key;
-        private readonly Action m_onCompleted;
-        private readonly List<IProgress<ContentDownloadProgress>> m_progressListeners = new();
-        private readonly UniTaskCompletionSource<bool> m_completion = new();
+        private readonly object _key;
+        private readonly Func<AsyncOperationHandle> _start;
+        private readonly Action _onCompleted;
+        private readonly List<IProgress<ContentDownloadProgress>> _progressListeners = new();
+        private readonly UniTaskCompletionSource<bool> _completion = new();
 
-        private AsyncOperationHandle m_handle;
+        private AsyncOperationHandle _handle;
+        private bool _started;
 
-        public UniTask Task => m_completion.Task.AsUniTask();
+        public UniTask<bool> Task => _completion.Task;
 
-        public SharedDownloadOperation(object key, Action onCompleted)
+        public SharedDownloadOperation(object key, Func<AsyncOperationHandle> start, Action onCompleted)
         {
-            m_key = key;
-            m_onCompleted = onCompleted;
+            _key = key;
+            _start = start;
+            _onCompleted = onCompleted;
         }
 
         public void Start()
         {
+            if (_started)
+                return;
+
+            _started = true;
             RunAsync().Forget();
         }
 
         public void AddProgress(IProgress<ContentDownloadProgress> progress)
         {
-            if (progress == null || m_progressListeners.Contains(progress))
+            if (progress == null || _progressListeners.Contains(progress))
                 return;
 
-            m_progressListeners.Add(progress);
+            _progressListeners.Add(progress);
         }
 
         public void RemoveProgress(IProgress<ContentDownloadProgress> progress)
         {
             if (progress != null)
-                m_progressListeners.Remove(progress);
+                _progressListeners.Remove(progress);
         }
 
-        private async UniTask RunAsync()
+        private async UniTaskVoid RunAsync()
         {
-            m_handle = Addressables.DownloadDependenciesAsync(m_key, false);
+            _handle = _start();
 
             try
             {
-                while (!m_handle.IsDone)
+                long lastDownloadedBytes = -1;
+                long lastTotalBytes = -1;
+
+                while (!_handle.IsDone)
                 {
-                    ReportProgress(false);
+                    var status = _handle.GetDownloadStatus();
+
+                    if (status.DownloadedBytes != lastDownloadedBytes || status.TotalBytes != lastTotalBytes)
+                    {
+                        ReportProgress(status.DownloadedBytes, status.TotalBytes, false);
+                        lastDownloadedBytes = status.DownloadedBytes;
+                        lastTotalBytes = status.TotalBytes;
+                    }
+
                     await UniTask.Yield();
                 }
 
-                if (m_handle.Status != AsyncOperationStatus.Succeeded)
-                    throw new ContentOperationException("Download", m_key, m_handle.OperationException);
+                if (_handle.Status != AsyncOperationStatus.Succeeded)
+                    throw new ContentOperationException("Download", _key, _handle.OperationException);
 
-                ReportProgress(true);
-                m_completion.TrySetResult(true);
+                var finalStatus = _handle.GetDownloadStatus();
+                ReportProgress(finalStatus.DownloadedBytes, finalStatus.TotalBytes, true);
+
+                _completion.TrySetResult(true);
             }
             catch (Exception exception)
             {
-                m_completion.TrySetException(exception);
+                if (exception is ContentOperationException)
+                    _completion.TrySetException(exception);
+                else
+                    _completion.TrySetException(new ContentOperationException("Download", _key, exception));
             }
             finally
             {
-                if (m_handle.IsValid())
-                    Addressables.Release(m_handle);
+                if (_handle.IsValid())
+                    UnityEngine.AddressableAssets.Addressables.Release(_handle);
 
-                m_onCompleted?.Invoke();
+                _onCompleted?.Invoke();
             }
         }
 
-        private void ReportProgress(bool isDone)
+        private void ReportProgress(long downloadedBytes, long totalBytes, bool isDone)
         {
-            var status = m_handle.GetDownloadStatus();
-            var progress = new ContentDownloadProgress(status.DownloadedBytes, status.TotalBytes, isDone);
+            var progress = new ContentDownloadProgress(downloadedBytes, totalBytes, isDone);
 
-            for (var i = 0; i < m_progressListeners.Count; i++)
-                m_progressListeners[i]?.Report(progress);
+            for (var i = 0; i < _progressListeners.Count; i++)
+                _progressListeners[i]?.Report(progress);
         }
     }
 }

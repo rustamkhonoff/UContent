@@ -1,19 +1,17 @@
 using System;
 using System.Threading;
-using UContent.Diagnostics;
 using UnityEngine;
 
 namespace UContent
 {
     public sealed class ContentInstance : IDisposable
     {
-        private readonly GameObject m_instance;
-        private readonly int m_debugId;
+        private readonly GameObject _instance;
 
-        private Action m_release;
+        private Action _release;
 
         public object Key { get; }
-        public bool IsReleased => Volatile.Read(ref m_release) == null;
+        public bool IsReleased => Volatile.Read(ref _release) == null;
 
         public GameObject Instance
         {
@@ -22,7 +20,7 @@ namespace UContent
                 if (IsReleased)
                     throw new ObjectDisposedException(nameof(ContentInstance));
 
-                return m_instance;
+                return _instance;
             }
         }
 
@@ -31,20 +29,13 @@ namespace UContent
         internal ContentInstance(object key, GameObject instance, Action release)
         {
             Key = key;
-            m_instance = instance;
-            m_release = release ?? throw new ArgumentNullException(nameof(release));
-            m_debugId = ContentDiagnostics.Register(ContentDebugType.Instance, key, instance != null ? instance.name : null);
+            _instance = instance;
+            _release = release ?? throw new ArgumentNullException(nameof(release));
         }
 
         public void Dispose()
         {
-            Action release = Interlocked.Exchange(ref m_release, null);
-
-            if (release == null)
-                return;
-
-            release();
-            ContentDiagnostics.Release(m_debugId);
+            Interlocked.Exchange(ref _release, null)?.Invoke();
         }
     }
 }

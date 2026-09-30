@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using UContent.Internal;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -14,7 +15,8 @@ namespace UContent
 {
     public sealed class AddressablesContentService : IContentService
     {
-        private readonly Dictionary<ContentRequestKey, ISharedContentEntry> m_sharedLoads = new();
+        private readonly Dictionary<ContentRequestKey, ISharedContentEntry> _sharedLoads = new();
+        private readonly Dictionary<ContentDownloadKey, SharedDownloadOperation> _sharedDownloads = new();
 
         public async UniTask InitializeAsync(CancellationToken cancellationToken = default)
         {
@@ -69,6 +71,9 @@ namespace UContent
 
         public async UniTask<ContentHandle<IReadOnlyList<T>>> LoadAllAsync<T>(object key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
         {
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
             var handle = Addressables.LoadAssetsAsync<T>(key, null, false);
 
             try
@@ -81,28 +86,39 @@ namespace UContent
                 IReadOnlyList<T> result = new ReadOnlyCollection<T>(assets);
                 return new ContentHandle<IReadOnlyList<T>>(key, result, () => Release(handle));
             }
-            catch
+            catch (OperationCanceledException)
             {
                 Release(handle);
                 throw;
+            }
+            catch (ContentOperationException)
+            {
+                Release(handle);
+                throw;
+            }
+            catch (Exception exception)
+            {
+                Release(handle);
+                throw CreateException("LoadAll", key, exception);
             }
         }
 
         public async UniTask<ContentHandle<IReadOnlyList<T>>> LoadAllAsync<T>(IEnumerable<object> keys, ContentMergeMode mergeMode = ContentMergeMode.Union, CancellationToken cancellationToken = default) where T : UnityEngine.Object
         {
-            var keyList = keys?.ToList();
+            var keyList = ToKeyList(keys);
 
-            if (keyList == null || keyList.Count == 0)
+            if (keyList.Count == 0)
                 throw new ArgumentException("Content keys cannot be empty.", nameof(keys));
 
             var handle = Addressables.LoadAssetsAsync<T>(keyList, null, mergeMode.ToAddressables(), false);
+            var debugKey = string.Join(", ", keyList);
 
             try
             {
                 var assets = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded || assets == null)
-                    throw CreateException("LoadAll", string.Join(", ", keyList), handle.OperationException);
+                    throw CreateException("LoadAll", debugKey, handle.OperationException);
 
                 IReadOnlyList<T> result = new ReadOnlyCollection<T>(assets);
                 return new ContentHandle<IReadOnlyList<T>>(keyList, result, () => Release(handle));
@@ -120,12 +136,15 @@ namespace UContent
             catch (Exception exception)
             {
                 Release(handle);
-                throw CreateException("LoadAll", string.Join(", ", keyList), exception);
+                throw CreateException("LoadAll", debugKey, exception);
             }
         }
 
         public async UniTask<bool> ExistsAsync<T>(object key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
         {
+            if (key == null)
+                return false;
+
             var handle = Addressables.LoadResourceLocationsAsync(key, typeof(T));
 
             try
@@ -141,11 +160,14 @@ namespace UContent
 
         public async UniTask<ContentInstance> InstantiateAsync(object key, Transform parent = null, bool instantiateInWorldSpace = false, CancellationToken cancellationToken = default)
         {
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
             var handle = Addressables.InstantiateAsync(key, parent, instantiateInWorldSpace, false);
 
             try
             {
-                GameObject instance = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var instance = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded || instance == null)
                     throw CreateException("Instantiate", key, handle.OperationException);
@@ -171,11 +193,14 @@ namespace UContent
 
         public async UniTask<ContentInstance> InstantiateAsync(object key, Vector3 position, Quaternion rotation, Transform parent = null, CancellationToken cancellationToken = default)
         {
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
             var handle = Addressables.InstantiateAsync(key, position, rotation, parent, false);
 
             try
             {
-                GameObject instance = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var instance = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded || instance == null)
                     throw CreateException("Instantiate", key, handle.OperationException);
@@ -201,16 +226,19 @@ namespace UContent
 
         public async UniTask<ContentScene> LoadSceneAsync(object key, LoadSceneMode mode = LoadSceneMode.Single, bool activateOnLoad = true, int priority = 100)
         {
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
             var handle = Addressables.LoadSceneAsync(key, mode, activateOnLoad, priority);
 
             try
             {
-                await handle;
+                var sceneInstance = await handle.ToUniTask();
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("LoadScene", key, handle.OperationException);
 
-                return new ContentScene(key, handle.Result.Scene, () => UnloadSceneAsync(handle, key));
+                return new ContentScene(key, sceneInstance.Scene, () => UnloadSceneAsync(handle, key));
             }
             catch (ContentOperationException)
             {
@@ -226,11 +254,14 @@ namespace UContent
 
         public async UniTask<long> GetDownloadSizeAsync(object key, CancellationToken cancellationToken = default)
         {
+            if (key == null)
+                return 0;
+
             var handle = Addressables.GetDownloadSizeAsync(key);
 
             try
             {
-                long size = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var size = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("GetDownloadSize", key, handle.OperationException);
@@ -257,58 +288,21 @@ namespace UContent
 
         public async UniTask<long> GetDownloadSizeAsync(IEnumerable<object> keys, CancellationToken cancellationToken = default)
         {
-            var keyList = keys?.ToList();
+            var keyList = ToKeyList(keys);
 
-            if (keyList == null || keyList.Count == 0)
+            if (keyList.Count == 0)
                 return 0;
 
             var handle = Addressables.GetDownloadSizeAsync(keyList);
 
             try
             {
-                long size = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var size = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("GetDownloadSize", string.Join(", ", keyList), handle.OperationException);
 
                 return size;
-            }
-            finally
-            {
-                Release(handle);
-            }
-        }
-
-        public async UniTask DownloadAsync(object key, IProgress<ContentDownloadProgress> progress = null, CancellationToken cancellationToken = default)
-        {
-            AsyncOperationHandle handle = Addressables.DownloadDependenciesAsync(key, false);
-
-            try
-            {
-                long lastDownloadedBytes = -1;
-                long lastTotalBytes = -1;
-
-                while (!handle.IsDone)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    DownloadStatus status = handle.GetDownloadStatus();
-
-                    if (status.DownloadedBytes != lastDownloadedBytes || status.TotalBytes != lastTotalBytes)
-                    {
-                        progress?.Report(new ContentDownloadProgress(status.DownloadedBytes, status.TotalBytes, false));
-                        lastDownloadedBytes = status.DownloadedBytes;
-                        lastTotalBytes = status.TotalBytes;
-                    }
-
-                    await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
-                }
-
-                if (handle.Status != AsyncOperationStatus.Succeeded)
-                    throw CreateException("Download", key, handle.OperationException);
-
-                DownloadStatus finalStatus = handle.GetDownloadStatus();
-                progress?.Report(new ContentDownloadProgress(finalStatus.DownloadedBytes, finalStatus.TotalBytes, true));
             }
             catch (OperationCanceledException)
             {
@@ -320,7 +314,7 @@ namespace UContent
             }
             catch (Exception exception)
             {
-                throw CreateException("Download", key, exception);
+                throw CreateException("GetDownloadSize", string.Join(", ", keyList), exception);
             }
             finally
             {
@@ -328,37 +322,26 @@ namespace UContent
             }
         }
 
-        public async UniTask DownloadAsync(IEnumerable<object> keys, ContentMergeMode mergeMode = ContentMergeMode.Union, IProgress<ContentDownloadProgress> progress = null, CancellationToken cancellationToken = default)
+        public UniTask DownloadAsync(object key, IProgress<ContentDownloadProgress> progress = null, CancellationToken cancellationToken = default)
         {
-            var keyList = keys?.ToList();
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
 
-            if (keyList == null || keyList.Count == 0)
-                return;
+            var requestKey = ContentDownloadKey.Single(key);
+            return DownloadSharedAsync(requestKey, key, () => Addressables.DownloadDependenciesAsync(key, false), progress, cancellationToken);
+        }
 
-            AsyncOperationHandle handle = Addressables.DownloadDependenciesAsync(keyList, mergeMode.ToAddressables(), false);
+        public UniTask DownloadAsync(IEnumerable<object> keys, ContentMergeMode mergeMode = ContentMergeMode.Union, IProgress<ContentDownloadProgress> progress = null, CancellationToken cancellationToken = default)
+        {
+            var keyList = ToKeyList(keys);
 
-            try
-            {
-                while (!handle.IsDone)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
+            if (keyList.Count == 0)
+                return UniTask.CompletedTask;
 
-                    DownloadStatus status = handle.GetDownloadStatus();
-                    progress?.Report(new ContentDownloadProgress(status.DownloadedBytes, status.TotalBytes, false));
+            var requestKey = ContentDownloadKey.Multiple(keyList, mergeMode);
+            var debugKey = string.Join(", ", keyList);
 
-                    await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
-                }
-
-                if (handle.Status != AsyncOperationStatus.Succeeded)
-                    throw CreateException("Download", string.Join(", ", keyList), handle.OperationException);
-
-                DownloadStatus finalStatus = handle.GetDownloadStatus();
-                progress?.Report(new ContentDownloadProgress(finalStatus.DownloadedBytes, finalStatus.TotalBytes, true));
-            }
-            finally
-            {
-                Release(handle);
-            }
+            return DownloadSharedAsync(requestKey, debugKey, () => Addressables.DownloadDependenciesAsync(keyList, mergeMode.ToAddressables(), false), progress, cancellationToken);
         }
 
         public async UniTask<IReadOnlyList<string>> CheckForCatalogUpdatesAsync(CancellationToken cancellationToken = default)
@@ -373,6 +356,18 @@ namespace UContent
                     throw CreateException("CheckForCatalogUpdates", null, handle.OperationException);
 
                 return (IReadOnlyList<string>)catalogs ?? Array.Empty<string>();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (ContentOperationException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw CreateException("CheckForCatalogUpdates", null, exception);
             }
             finally
             {
@@ -396,6 +391,14 @@ namespace UContent
 
                 return locators?.Count ?? 0;
             }
+            catch (ContentOperationException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw CreateException("UpdateCatalogs", null, exception);
+            }
             finally
             {
                 Release(handle);
@@ -404,11 +407,14 @@ namespace UContent
 
         public async UniTask<bool> ClearCacheAsync(object key, CancellationToken cancellationToken = default)
         {
+            if (key == null)
+                return false;
+
             var handle = Addressables.ClearDependencyCacheAsync(key, false);
 
             try
             {
-                bool result = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var result = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("ClearCache", key, handle.OperationException);
@@ -439,7 +445,7 @@ namespace UContent
 
             try
             {
-                bool result = await handle.ToUniTask(cancellationToken: cancellationToken);
+                var result = await handle.ToUniTask(cancellationToken: cancellationToken);
 
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("CleanBundleCache", null, handle.OperationException);
@@ -469,6 +475,41 @@ namespace UContent
             return new ContentScope(this, name);
         }
 
+        private SharedContentEntry<T> GetOrCreateSharedEntry<T>(ContentRequestKey requestKey, object key) where T : UnityEngine.Object
+        {
+            if (_sharedLoads.TryGetValue(requestKey, out var existing))
+                return (SharedContentEntry<T>)existing;
+
+            var entry = new SharedContentEntry<T>(key, () => _sharedLoads.Remove(requestKey));
+
+            _sharedLoads.Add(requestKey, entry);
+            entry.Start();
+
+            return entry;
+        }
+
+        private async UniTask DownloadSharedAsync(ContentDownloadKey requestKey, object debugKey, Func<AsyncOperationHandle> start, IProgress<ContentDownloadProgress> progress, CancellationToken cancellationToken)
+        {
+            if (!_sharedDownloads.TryGetValue(requestKey, out var operation))
+            {
+                operation = new SharedDownloadOperation(debugKey, start, () => _sharedDownloads.Remove(requestKey));
+
+                _sharedDownloads.Add(requestKey, operation);
+                operation.Start();
+            }
+
+            operation.AddProgress(progress);
+
+            try
+            {
+                await operation.Task.AttachExternalCancellation(cancellationToken);
+            }
+            finally
+            {
+                operation.RemoveProgress(progress);
+            }
+        }
+
         private static async UniTask UnloadSceneAsync(AsyncOperationHandle<SceneInstance> sceneHandle, object key)
         {
             if (!sceneHandle.IsValid())
@@ -478,7 +519,7 @@ namespace UContent
 
             try
             {
-                await unloadHandle;
+                await unloadHandle.ToUniTask();
 
                 if (unloadHandle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("UnloadScene", key, unloadHandle.OperationException);
@@ -522,6 +563,11 @@ namespace UContent
             ReleaseInstance(handle);
         }
 
+        private static List<object> ToKeyList(IEnumerable<object> keys)
+        {
+            return keys?.Where(x => x != null).ToList() ?? new List<object>();
+        }
+
         private static void Release<T>(AsyncOperationHandle<T> handle)
         {
             if (handle.IsValid())
@@ -537,19 +583,6 @@ namespace UContent
         private static ContentOperationException CreateException(string operation, object key, Exception innerException)
         {
             return new ContentOperationException(operation, key, innerException);
-        }
-
-        private SharedContentEntry<T> GetOrCreateSharedEntry<T>(ContentRequestKey requestKey, object key) where T : UnityEngine.Object
-        {
-            if (m_sharedLoads.TryGetValue(requestKey, out var existing))
-                return (SharedContentEntry<T>)existing;
-
-            var entry = new SharedContentEntry<T>(key, () => m_sharedLoads.Remove(requestKey));
-
-            m_sharedLoads.Add(requestKey, entry);
-            entry.Start();
-
-            return entry;
         }
     }
 }

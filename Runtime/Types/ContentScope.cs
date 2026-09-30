@@ -2,35 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
-using UContent.Diagnostics;
 using UnityEngine;
 
 namespace UContent
 {
     public sealed class ContentScope : IDisposable
     {
-        private readonly IContentService m_content;
-        private readonly List<IDisposable> m_handles = new();
-        private readonly int m_debugId;
+        private readonly IContentService _content;
+        private readonly List<IDisposable> _handles = new();
 
-        private bool m_disposed;
+        private bool _disposed;
 
         public string Name { get; }
-        public int Count => m_handles.Count;
-        public bool IsDisposed => m_disposed;
+        public int Count => _handles.Count;
+        public bool IsDisposed => _disposed;
 
         internal ContentScope(IContentService content, string name)
         {
-            m_content = content;
+            _content = content;
             Name = string.IsNullOrEmpty(name) ? "ContentScope" : name;
-            m_debugId = ContentDiagnostics.Register(ContentDebugType.Scope, null, Name);
         }
 
         public async UniTask<T> LoadAsync<T>(object key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
         {
             ThrowIfDisposed();
 
-            var handle = await m_content.LoadAsync<T>(key, cancellationToken);
+            var handle = await _content.LoadAsync<T>(key, cancellationToken);
             Register(handle);
 
             return handle.Value;
@@ -40,7 +37,7 @@ namespace UContent
         {
             ThrowIfDisposed();
 
-            var handle = await m_content.LoadAllAsync<T>(key, cancellationToken);
+            var handle = await _content.LoadAllAsync<T>(key, cancellationToken);
             Register(handle);
 
             return handle.Value;
@@ -50,7 +47,7 @@ namespace UContent
         {
             ThrowIfDisposed();
 
-            var handle = await m_content.LoadAllAsync<T>(keys, mergeMode, cancellationToken);
+            var handle = await _content.LoadAllAsync<T>(keys, mergeMode, cancellationToken);
             Register(handle);
 
             return handle.Value;
@@ -60,7 +57,7 @@ namespace UContent
         {
             ThrowIfDisposed();
 
-            ContentInstance instance = await m_content.InstantiateAsync(key, parent, instantiateInWorldSpace, cancellationToken);
+            var instance = await _content.InstantiateAsync(key, parent, instantiateInWorldSpace, cancellationToken);
             Register(instance);
 
             return instance.Instance;
@@ -70,7 +67,7 @@ namespace UContent
         {
             ThrowIfDisposed();
 
-            ContentInstance instance = await m_content.InstantiateAsync(key, position, rotation, parent, cancellationToken);
+            var instance = await _content.InstantiateAsync(key, position, rotation, parent, cancellationToken);
             Register(instance);
 
             return instance.Instance;
@@ -78,11 +75,11 @@ namespace UContent
 
         public void Clear()
         {
-            for (int i = m_handles.Count - 1; i >= 0; i--)
+            for (var i = _handles.Count - 1; i >= 0; i--)
             {
                 try
                 {
-                    m_handles[i].Dispose();
+                    _handles[i].Dispose();
                 }
                 catch (Exception exception)
                 {
@@ -90,34 +87,32 @@ namespace UContent
                 }
             }
 
-            m_handles.Clear();
+            _handles.Clear();
         }
 
         public void Dispose()
         {
-            if (m_disposed)
+            if (_disposed)
                 return;
 
-            m_disposed = true;
-
+            _disposed = true;
             Clear();
-            ContentDiagnostics.Release(m_debugId);
         }
 
         private void Register(IDisposable handle)
         {
-            if (m_disposed)
+            if (_disposed)
             {
                 handle.Dispose();
                 throw new ObjectDisposedException(Name);
             }
 
-            m_handles.Add(handle);
+            _handles.Add(handle);
         }
 
         private void ThrowIfDisposed()
         {
-            if (m_disposed)
+            if (_disposed)
                 throw new ObjectDisposedException(Name);
         }
     }

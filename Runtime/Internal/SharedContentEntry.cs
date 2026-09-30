@@ -1,98 +1,101 @@
 using System;
 using Cysharp.Threading.Tasks;
+using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 
-namespace UContent
+namespace UContent.Internal
 {
     internal interface ISharedContentEntry { }
 
     internal sealed class SharedContentEntry<T> : ISharedContentEntry where T : UnityEngine.Object
     {
-        private readonly object m_key;
-        private readonly Action m_onReleased;
-        private readonly UniTaskCompletionSource<T> m_completion = new();
+        private readonly object _key;
+        private readonly Action _onReleased;
+        private readonly UniTaskCompletionSource<T> _completion = new();
 
-        private AsyncOperationHandle<T> m_handle;
-        private int m_references;
+        private AsyncOperationHandle<T> _handle;
 
-        private bool m_started;
-        private bool m_completed;
-        private bool m_released;
+        private int _references;
+        private bool _started;
+        private bool _completed;
+        private bool _released;
 
-        public UniTask<T> Task => m_completion.Task;
-        public int References => m_references;
+        public UniTask<T> Task => _completion.Task;
+        public int References => _references;
 
         public SharedContentEntry(object key, Action onReleased)
         {
-            m_key = key;
-            m_onReleased = onReleased;
+            _key = key;
+            _onReleased = onReleased;
         }
 
         public void Retain()
         {
-            if (m_released)
+            if (_released)
                 throw new ObjectDisposedException(nameof(SharedContentEntry<T>));
 
-            m_references++;
+            _references++;
         }
 
         public void Start()
         {
-            if (m_started)
+            if (_started)
                 return;
 
-            m_started = true;
+            _started = true;
             RunAsync().Forget();
         }
 
         public void Release()
         {
-            if (m_released)
+            if (_released)
                 return;
 
-            if (m_references > 0)
-                m_references--;
+            if (_references > 0)
+                _references--;
 
             TryRelease();
         }
 
-        private async UniTask RunAsync()
+        private async UniTaskVoid RunAsync()
         {
-            m_handle = Addressables.LoadAssetAsync<T>(m_key);
+            _handle = Addressables.LoadAssetAsync<T>(_key);
 
             try
             {
-                var asset = await m_handle.ToUniTask();
+                var asset = await _handle.ToUniTask();
 
-                if (m_handle.Status != AsyncOperationStatus.Succeeded || asset == null)
+                if (_handle.Status != AsyncOperationStatus.Succeeded || asset == null)
                 {
-                    Fail(new ContentOperationException("Load", m_key, m_handle.OperationException));
+                    Fail(new ContentOperationException("Load", _key, _handle.OperationException));
                     return;
                 }
 
-                m_completed = true;
-                m_completion.TrySetResult(asset);
+                _completed = true;
+                _completion.TrySetResult(asset);
 
                 TryRelease();
             }
             catch (Exception exception)
             {
-                Fail(exception);
+                if (exception is ContentOperationException)
+                    Fail(exception);
+                else
+                    Fail(new ContentOperationException("Load", _key, exception));
             }
         }
 
         private void Fail(Exception exception)
         {
-            m_completed = true;
-            m_completion.TrySetException(exception);
-
+            _completed = true;
+            _completion.TrySetException(exception);
             ReleaseHandle();
         }
 
         private void TryRelease()
         {
-            if (!m_completed || m_references > 0)
+            if (!_completed || _references > 0)
                 return;
 
             ReleaseHandle();
@@ -100,15 +103,15 @@ namespace UContent
 
         private void ReleaseHandle()
         {
-            if (m_released)
+            if (_released)
                 return;
 
-            m_released = true;
+            _released = true;
 
-            if (m_handle.IsValid())
-                Addressables.Release(m_handle);
+            if (_handle.IsValid())
+                Addressables.Release(_handle);
 
-            m_onReleased?.Invoke();
+            _onReleased?.Invoke();
         }
     }
 }

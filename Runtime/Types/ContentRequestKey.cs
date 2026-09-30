@@ -1,6 +1,6 @@
 using System;
 
-namespace UContent
+namespace UContent.Internal
 {
     internal readonly struct ContentRequestKey : IEquatable<ContentRequestKey>
     {
