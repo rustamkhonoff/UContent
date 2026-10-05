@@ -27,7 +27,7 @@ namespace UContent.Diagnostics
             string stackTrace = CaptureStackTrace ? Environment.StackTrace : null;
 
             Entries[id] = new ContentDebugEntry(id, type, name ?? type.ToString(), key?.ToString(), stackTrace);
-            Changed?.Invoke();
+            NotifyChanged();
 
             return id;
         }
@@ -40,12 +40,31 @@ namespace UContent.Diagnostics
             if (!Entries.Remove(id))
                 return;
 
-            Changed?.Invoke();
+            NotifyChanged();
         }
 
         public static IReadOnlyList<ContentDebugEntry> GetEntries()
         {
             return Entries.Values.OrderBy(x => x.CreatedAtUtc).ToArray();
+        }
+
+        private static void NotifyChanged()
+        {
+            var changed = Changed;
+            if (changed == null)
+                return;
+
+            foreach (Action listener in changed.GetInvocationList())
+            {
+                try
+                {
+                    listener();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception);
+                }
+            }
         }
     }
 }

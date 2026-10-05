@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using UContent.Diagnostics;
 using UnityEngine;
 
 namespace UContent
@@ -10,6 +11,7 @@ namespace UContent
     {
         private readonly IContentService _content;
         private readonly List<IDisposable> _handles = new();
+        private readonly int _debugId;
 
         private bool _disposed;
 
@@ -21,6 +23,7 @@ namespace UContent
         {
             _content = content;
             Name = string.IsNullOrEmpty(name) ? "ContentScope" : name;
+            _debugId = ContentDiagnostics.Register(ContentDebugType.Scope, null, Name);
         }
 
         public async UniTask<T> LoadAsync<T>(object key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
@@ -97,6 +100,7 @@ namespace UContent
 
             _disposed = true;
             Clear();
+            ContentDiagnostics.Release(_debugId);
         }
 
         private void Register(IDisposable handle)

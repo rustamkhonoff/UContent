@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
+using UnityEngine;
 using UnityEngine.ResourceManagement.AsyncOperations;
 
 namespace UContent.Internal
@@ -15,6 +16,7 @@ namespace UContent.Internal
 
         private AsyncOperationHandle _handle;
         private bool _started;
+        private ContentDownloadProgress? _lastProgress;
 
         public UniTask<bool> Task => _completion.Task;
 
@@ -36,10 +38,12 @@ namespace UContent.Internal
 
         public void AddProgress(IProgress<ContentDownloadProgress> progress)
         {
-            if (progress == null || _progressListeners.Contains(progress))
+            if (progress == null)
                 return;
 
             _progressListeners.Add(progress);
+            if (_lastProgress.HasValue)
+                ReportTo(progress, _lastProgress.Value);
         }
 
         public void RemoveProgress(IProgress<ContentDownloadProgress> progress)
@@ -50,10 +54,10 @@ namespace UContent.Internal
 
         private async UniTaskVoid RunAsync()
         {
-            _handle = _start();
-
+            Exception failure = null;
             try
             {
+                _handle = _start();
                 long lastDownloadedBytes = -1;
                 long lastTotalBytes = -1;
 
@@ -76,15 +80,12 @@ namespace UContent.Internal
 
                 var finalStatus = _handle.GetDownloadStatus();
                 ReportProgress(finalStatus.DownloadedBytes, finalStatus.TotalBytes, true);
-
-                _completion.TrySetResult(true);
             }
             catch (Exception exception)
             {
-                if (exception is ContentOperationException)
-                    _completion.TrySetException(exception);
-                else
-                    _completion.TrySetException(new ContentOperationException("Download", _key, exception));
+                failure = exception is ContentOperationException
+                    ? exception
+                    : new ContentOperationException("Download", _key, exception);
             }
             finally
             {
@@ -93,14 +94,34 @@ namespace UContent.Internal
 
                 _onCompleted?.Invoke();
             }
+
+            // Remove the operation before resuming callers that might retry synchronously.
+            if (failure == null)
+                _completion.TrySetResult(true);
+            else
+                _completion.TrySetException(failure);
         }
 
         private void ReportProgress(long downloadedBytes, long totalBytes, bool isDone)
         {
             var progress = new ContentDownloadProgress(downloadedBytes, totalBytes, isDone);
+            _lastProgress = progress;
 
-            for (var i = 0; i < _progressListeners.Count; i++)
-                _progressListeners[i]?.Report(progress);
+            // A callback can cancel a request and remove a listener during reporting.
+            foreach (var listener in _progressListeners.ToArray())
+                ReportTo(listener, progress);
+        }
+
+        private static void ReportTo(IProgress<ContentDownloadProgress> listener, ContentDownloadProgress progress)
+        {
+            try
+            {
+                listener.Report(progress);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+            }
         }
     }
 }

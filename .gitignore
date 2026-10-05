@@ -104,3 +104,9 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Standalone lifecycle regression harness (excluded from Unity by Tests~).
+/Tests~/RegressionHarness/bin/
+/Tests~/RegressionHarness/obj/
+!/Tests~/RegressionHarness/RegressionHarness.csproj
+/.verification/

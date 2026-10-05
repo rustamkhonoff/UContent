@@ -60,10 +60,9 @@ namespace UContent.Internal
 
         private async UniTaskVoid RunAsync()
         {
-            _handle = Addressables.LoadAssetAsync<T>(_key);
-
             try
             {
+                _handle = Addressables.LoadAssetAsync<T>(_key);
                 var asset = await _handle.ToUniTask();
 
                 if (_handle.Status != AsyncOperationStatus.Succeeded || asset == null)
@@ -89,8 +88,8 @@ namespace UContent.Internal
         private void Fail(Exception exception)
         {
             _completed = true;
-            _completion.TrySetException(exception);
             ReleaseHandle();
+            _completion.TrySetException(exception);
         }
 
         private void TryRelease()

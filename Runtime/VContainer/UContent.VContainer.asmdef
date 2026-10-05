@@ -16,7 +16,7 @@
     ],
     "versionDefines": [
         {
-            "name": "com.cysharp.messagepipe.vcontainer",
+            "name": "jp.hadashikick.vcontainer",
             "expression": "0",
             "define": "VCONTAINER"
         }

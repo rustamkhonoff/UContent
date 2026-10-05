@@ -52,10 +52,13 @@ namespace UContent
             if (key == null)
                 throw new ArgumentNullException(nameof(key));
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             var requestKey = new ContentRequestKey(typeof(T), key);
             var entry = GetOrCreateSharedEntry<T>(requestKey, key);
 
             entry.Retain();
+            entry.Start();
 
             try
             {
@@ -238,7 +241,9 @@ namespace UContent
                 if (handle.Status != AsyncOperationStatus.Succeeded)
                     throw CreateException("LoadScene", key, handle.OperationException);
 
-                return new ContentScene(key, sceneInstance.Scene, () => UnloadSceneAsync(handle, key));
+                return new ContentScene(key, sceneInstance.Scene,
+                    () => sceneInstance.ActivateAsync().ToUniTask(),
+                    () => UnloadSceneAsync(handle, key), activateOnLoad);
             }
             catch (ContentOperationException)
             {
@@ -483,25 +488,26 @@ namespace UContent
             var entry = new SharedContentEntry<T>(key, () => _sharedLoads.Remove(requestKey));
 
             _sharedLoads.Add(requestKey, entry);
-            entry.Start();
 
             return entry;
         }
 
         private async UniTask DownloadSharedAsync(ContentDownloadKey requestKey, object debugKey, Func<AsyncOperationHandle> start, IProgress<ContentDownloadProgress> progress, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!_sharedDownloads.TryGetValue(requestKey, out var operation))
             {
                 operation = new SharedDownloadOperation(debugKey, start, () => _sharedDownloads.Remove(requestKey));
 
                 _sharedDownloads.Add(requestKey, operation);
-                operation.Start();
             }
 
             operation.AddProgress(progress);
 
             try
             {
+                operation.Start();
                 await operation.Task.AttachExternalCancellation(cancellationToken);
             }
             finally

@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using UContent.Diagnostics;
 using UnityEngine;
 
 namespace UContent
@@ -7,6 +8,7 @@ namespace UContent
     public sealed class ContentInstance : IDisposable
     {
         private readonly GameObject _instance;
+        private readonly int _debugId;
 
         private Action _release;
 
@@ -31,11 +33,23 @@ namespace UContent
             Key = key;
             _instance = instance;
             _release = release ?? throw new ArgumentNullException(nameof(release));
+            _debugId = ContentDiagnostics.Register(ContentDebugType.Instance, key);
         }
 
         public void Dispose()
         {
-            Interlocked.Exchange(ref _release, null)?.Invoke();
+            var release = Interlocked.Exchange(ref _release, null);
+            if (release == null)
+                return;
+
+            try
+            {
+                release();
+            }
+            finally
+            {
+                ContentDiagnostics.Release(_debugId);
+            }
         }
     }
 }
